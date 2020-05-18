@@ -1,6 +1,32 @@
 require 'omniauth-saml'
 module OpenProject
   module AuthSaml
+    def self.configuration
+      Hash(settings_from_config || settings_from_yaml).deep_merge(settings)
+    end
+
+    def self.settings
+      value = Setting.find_by(name: "auth_saml")&.value
+
+      value.is_a?(Hash) ? value : {}
+    end
+
+    def self.settings_from_config
+      if OpenProject::Configuration['saml'].present?
+        Rails.logger.info("[auth_saml] Registering saml integration from configuration.yml")
+
+        OpenProject::Configuration['saml']
+      end
+    end
+
+    def self.settings_from_yaml
+      if (settings = Rails.root.join('config', 'plugins', 'auth_saml', 'settings.yml')).exist?
+        Rails.logger.info("[auth_saml] Registering saml integration from settings file")
+
+        YAML::load(File.open(settings)).symbolize_keys
+      end
+    end
+
     class Engine < ::Rails::Engine
       engine_name :openproject_auth_saml
 
@@ -31,27 +57,15 @@ module OpenProject
       end
 
       register_auth_providers do
-        configuration = if OpenProject::Configuration['saml'].present?
-                          Rails.logger.info("[auth_saml] Registering saml integration from configuration.yml")
-
-                          OpenProject::Configuration['saml']
-                        elsif (settings = Rails.root.join('config', 'plugins', 'auth_saml', 'settings.yml')).exist?
-                          Rails.logger.info("[auth_saml] Registering saml integration from settings file")
-
-                          YAML::load(File.open(settings)).symbolize_keys
-                        end
-
-        if configuration
-          strategy :saml do
-            configuration.values.map do |h|
-              h[:openproject_attribute_map] = Proc.new do |auth|
-                {
-                  login: auth[:uid],
-                  admin: (auth.info['admin'].to_s.downcase == "true")
-                }
-              end
-              h.symbolize_keys
+        strategy :saml do
+          OpenProject::AuthSaml.configuration.values.map do |h|
+            h[:openproject_attribute_map] = Proc.new do |auth|
+              {
+                login: auth[:uid],
+                admin: (auth.info['admin'].to_s.downcase == "true")
+              }
             end
+            h.symbolize_keys
           end
         end
       end
